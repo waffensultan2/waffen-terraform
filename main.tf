@@ -24,16 +24,43 @@ resource "aws_instance" "web" {
   key_name                    = aws_key_pair.deployer.key_name
   associate_public_ip_address = true
   user_data                   = <<-EOF
-              #!/bin/bash
-              sudo apt update -y
-              sudo apt install -y nginx
+                #!/bin/bash
+                apt update -y
+                apt install -y python3 python3-pip git nginx
 
-              # Create index.html with H1 tag in the default NGINX web directory
-              echo "<h1>Hello From Ubuntu EC2 Instance!!!</h1>" | sudo tee /var/www/html/index.html
+                # Clone your repo
+                git clone ${local.flask_github_repo} /home/ubuntu/app
+                cd /home/ubuntu/app
 
-              # Restart NGINX to apply the changes which listens to port 80 by default
-              sudo systemctl restart nginx
-  EOF
+                export AWS_REGION=${local.assigned_aws_region}
+                export DYNAMODB_TABLE_NAME=${aws_dynamodb_table.products_table.name}
+
+                # Install Python dependencies
+                pip3 install --upgrade pip
+                pip3 install -r requirements.txt
+
+                # Start the Flask app using nohup (assumes app.py runs on 0.0.0.0:5000)
+                nohup python3 app.py > app.log 2>&1 &
+
+                # Configure NGINX to proxy traffic to the Flask app
+                tee /etc/nginx/sites-available/default > /dev/null << EOL
+                server {
+                    listen 80 default_server;
+                    listen [::]:80 default_server;
+
+                    location / {
+                        proxy_pass http://127.0.0.1:5000;
+                        proxy_set_header Host \$host;
+                        proxy_set_header X-Real-IP \$remote_addr;
+                        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+                        proxy_set_header X-Forwarded-Proto \$scheme;
+                    }
+                }
+                EOL
+
+                # Restart NGINX
+                systemctl restart nginx
+    EOF
 
   tags = {
     Name = "${local.team_name}-products-instance"
@@ -41,6 +68,8 @@ resource "aws_instance" "web" {
 
   # added to associate the EC2 instance with the security group
   vpc_security_group_ids = [aws_security_group.allow_ssh_http.id]
+
+  iam_instance_profile = aws_iam_instance_profile.ec2_instance_profile.name
 }
 
 resource "tls_private_key" "ssh_key" {
@@ -89,4 +118,67 @@ resource "aws_security_group" "allow_ssh_http" {
   tags = {
     Name = "${local.team_name}-allow-ssh-http"
   }
+}
+
+resource "aws_dynamodb_table" "products_table" {
+  name         = "${local.team_name}-products-table"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "product_id"
+
+  attribute {
+    name = "product_id"
+    type = "S"
+  }
+
+  ttl {
+    attribute_name = "TimeToExist"
+    enabled        = true
+  }
+
+  tags = {
+    Name        = "${local.team_name}-products-table"
+    Environment = "production"
+  }
+}
+
+data "aws_iam_policy_document" "ec2_assume_role_policy" {
+  statement {
+    effect = "Allow"
+
+    principals {
+      type        = "Service"
+      identifiers = ["ec2.amazonaws.com"]
+    }
+
+    actions = ["sts:AssumeRole"]
+  }
+}
+
+resource "aws_iam_role" "ec2_role" {
+  name               = "${local.team_name}-ec2-role"
+  assume_role_policy = data.aws_iam_policy_document.ec2_assume_role_policy.json
+}
+
+data "aws_iam_policy_document" "dynamodb_access_policy" {
+  statement {
+    effect = "Allow"
+    actions = [
+      "dynamodb:PutItem",
+      "dynamodb:Scan"
+    ]
+    resources = [
+      aws_dynamodb_table.products_table.arn
+    ]
+  }
+}
+
+resource "aws_iam_role_policy" "dynamodb_access" {
+  name   = "${local.team_name}-dynamodb-access"
+  role   = aws_iam_role.ec2_role.id
+  policy = data.aws_iam_policy_document.dynamodb_access_policy.json
+}
+
+resource "aws_iam_instance_profile" "ec2_instance_profile" {
+  name = "${local.team_name}-ec2-profile"
+  role = aws_iam_role.ec2_role.name
 }
