@@ -125,3 +125,20 @@ module "ec2_web_instance" {
     EOF
   ec2_instance_name    = "${local.team_name}-products-instance"
 }
+
+module "ec2_instance_profile" {
+  source       = "./modules/ec2_instance_profile"
+  profile_name = "${local.team_name}-ec2-profile-2"
+  iam_policies = [
+    {
+      effect = "Allow",
+      actions = [
+        "dynamodb:PutItem",
+        "dynamodb:Scan"
+      ]
+      resources = [
+        aws_dynamodb_table.products_table.arn
+      ]
+    }
+  ]
+}
