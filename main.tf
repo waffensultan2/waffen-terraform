@@ -83,6 +83,8 @@ resource "aws_iam_instance_profile" "ec2_instance_profile" {
 
 module "ec2_web_instance" {
   source               = "./modules/ec2"
+  aws_subnet_id = module.aws_network.public_subnet_one
+  aws_vpc_id = module.aws_network.aws_vpc_id
   iam_instance_profile = aws_iam_instance_profile.ec2_instance_profile.name
   keypair_name         = aws_key_pair.deployer.key_name
   user_data            = <<-EOF
@@ -141,4 +143,8 @@ module "ec2_instance_profile" {
       ]
     }
   ]
+}
+
+module "aws_network" {
+  source = "./modules/vpc"
 }

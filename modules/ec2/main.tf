@@ -12,6 +12,8 @@ resource "aws_instance" "web" {
 
   user_data = var.user_data
 
+  subnet_id = var.aws_subnet_id
+
   tags = {
     Name = "${var.ec2_instance_name}"
   }
@@ -40,6 +42,8 @@ resource "aws_security_group" "allow_ssh_http" {
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
+
+  vpc_id = var.aws_vpc_id
 
   tags = {
     Name = "${var.ec2_instance_name}-sg"
